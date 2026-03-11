@@ -29,6 +29,7 @@ class AgentRuntime:
         history = self.memory.get_history(session_id, limit=20)
         memories = self.memory.search(session_id, user_message, limit=5)
         scratchpad: list[str] = []
+        # TODO: make use of this in an example
         tool_context = ToolContext(session_id=session_id, workspace=str(self.settings.workspace))
 
         for step in range(1, self.settings.max_steps + 1):

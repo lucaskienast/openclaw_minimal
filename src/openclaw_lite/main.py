@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import time
 import urllib.request
+from dataclasses import is_dataclass, asdict
 
 import uvicorn
 
@@ -71,7 +71,16 @@ def main() -> None:
 
     if args.command == "inspect-tools":
         runtime = build_runtime()
-        print(json.dumps([tool.__dict__ for tool in runtime.tools.specs()], indent=2))
+
+        def to_jsonable(x):
+            if is_dataclass(x):
+                return asdict(x)
+            # fallback for non-dataclass objects
+            return {k: getattr(x, k) for k in dir(x)
+                    if not k.startswith("_") and isinstance(getattr(x, k),
+                                                            (str, int, float, bool, list, dict, type(None)))}
+
+        print(json.dumps([to_jsonable(tool) for tool in runtime.tools.specs()], indent=2))
         return
 
 
