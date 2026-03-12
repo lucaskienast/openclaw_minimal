@@ -31,4 +31,7 @@ def build_runtime() -> AgentRuntime:
     else:
         raise ValueError(f"Unsupported provider: {settings.provider}")
 
-    return AgentRuntime(settings=settings, memory=memory, provider=provider, tools=registry)
+    return AgentRuntime(settings=settings,
+                        memory=memory,
+                        provider=provider,
+                        tools=registry)

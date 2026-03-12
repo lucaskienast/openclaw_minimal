@@ -12,7 +12,10 @@ class ReadFileTool(Tool):
 
     def run(self, tool_input: dict, context: ToolContext) -> str:
         target = _safe_path(context.workspace, tool_input["path"])
-        return target.read_text(encoding="utf-8")
+        try:
+            return target.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return f"Error: file not found: {tool_input['path']}"
 
 
 class WriteFileTool(Tool):
@@ -28,7 +31,13 @@ class WriteFileTool(Tool):
         target = _safe_path(context.workspace, tool_input["path"])
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(tool_input["content"], encoding="utf-8")
-        return f"Wrote {target.relative_to(Path(context.workspace))}"
+        workspace_root = Path(context.workspace).resolve()
+        try:
+            rel = target.resolve().relative_to(workspace_root)
+            return f"Wrote {rel}"
+        except ValueError:
+            # fallback: don't 500 just because of formatting
+            return f"Wrote {target.resolve()}"
 
 
 class ListFilesTool(Tool):
@@ -39,8 +48,8 @@ class ListFilesTool(Tool):
     def run(self, tool_input: dict, context: ToolContext) -> str:
         root = _safe_path(context.workspace, tool_input.get("path", "."))
         if root.is_file():
-            return str(root.relative_to(Path(context.workspace)))
-        items = sorted(str(p.relative_to(Path(context.workspace))) for p in root.rglob("*") if p.is_file())
+            return str(root.relative_to(Path(context.workspace).resolve()))
+        items = sorted(str(p.relative_to(Path(context.workspace).resolve())) for p in root.rglob("*") if p.is_file())
         return "\n".join(items) if items else "Workspace is empty"
 
 

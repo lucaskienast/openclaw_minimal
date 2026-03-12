@@ -52,6 +52,7 @@ def main() -> None:
             print(resp.read().decode("utf-8"))
         return
 
+    # TODO: use in an example
     if args.command == "schedule":
         settings.ensure_directories()
         memory = MemoryStore(settings.db_path)
