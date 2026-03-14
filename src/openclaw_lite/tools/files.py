@@ -36,7 +36,6 @@ class WriteFileTool(Tool):
             rel = target.resolve().relative_to(workspace_root)
             return f"Wrote {rel}"
         except ValueError:
-            # fallback: don't 500 just because of formatting
             return f"Wrote {target.resolve()}"
 
 

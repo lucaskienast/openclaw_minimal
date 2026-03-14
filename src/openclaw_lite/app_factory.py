@@ -24,6 +24,8 @@ def build_runtime() -> AgentRuntime:
     registry.register(SystemInfoTool())
     load_plugins(Path(__file__).resolve().parents[2] / "plugins", registry)
 
+    print(f"Provider: {settings.provider}")
+
     if settings.provider == "demo":
         provider = DemoProvider()
     elif settings.provider == "openai_compatible":

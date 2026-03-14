@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
 
 from .config import Settings
 from .memory import MemoryStore
@@ -29,7 +28,6 @@ class AgentRuntime:
         history = self.memory.get_history(session_id, limit=20)
         memories = self.memory.search(session_id, user_message, limit=5)
         scratchpad: list[str] = []
-        # TODO: make use of this in an example
         tool_context = ToolContext(session_id=session_id, workspace=str(self.settings.workspace))
 
         for step in range(1, self.settings.max_steps + 1):
@@ -39,7 +37,6 @@ class AgentRuntime:
                 memories=memories,
                 tool_specs=self.tools.specs(),
                 user_message=user_message,
-                scratchpad=scratchpad,
             )
             logger.info("step=%s decision=%s reasoning=%s", step, decision.type, decision.reasoning)
 

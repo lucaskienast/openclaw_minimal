@@ -19,7 +19,6 @@ class DemoProvider(Provider):
                memories: list[ChatMessage],
                tool_specs: list[ToolSpec],
                user_message: str,
-               scratchpad: list[str]
                ) -> AgentDecision:
         lower = user_message.lower().strip()
 
@@ -55,12 +54,9 @@ class DemoProvider(Provider):
                                  tool_input={},
                                  reasoning="User asked for system info.")
 
-        scratch = "\n".join(f"- {s}" for s in scratchpad) or "No tool activity."
         content = (
-            "I am the lightweight educational runtime.\n\n"
-            f"Session context: {len(history)} message(s) in history, {len(memories)} relevant memory hit(s).\n\n"
-            f"Tool activity this turn:\n{scratch}\n\n"
-            "To see tool calling, try: `list files`, `read file notes.txt`, or `write file notes.txt: hello`."
+            "Demo Agent response.\n\n"
+            f"Session context: {len(history)} message(s) in history, {len(memories)} relevant memory hit(s).\n\n."
         )
         return AgentDecision(type="respond",
                              content=content,

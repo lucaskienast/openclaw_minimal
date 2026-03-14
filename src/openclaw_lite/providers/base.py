@@ -14,6 +14,5 @@ class Provider(ABC):
         memories: list[ChatMessage],
         tool_specs: list[ToolSpec],
         user_message: str,
-        scratchpad: list[str],
     ) -> AgentDecision:
         raise NotImplementedError

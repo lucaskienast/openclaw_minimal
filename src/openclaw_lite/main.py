@@ -4,10 +4,10 @@ import argparse
 import json
 import time
 import urllib.request
-from dataclasses import is_dataclass, asdict
 
 import uvicorn
 
+from openclaw_lite.utils import to_jsonable
 from .app_factory import build_runtime
 from .config import settings
 from .logging_utils import configure_logging
@@ -49,10 +49,14 @@ def main() -> None:
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
-            print(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8")
+            try:
+                data = json.loads(raw)
+                print(json.dumps(data, indent=2))
+            except json.JSONDecodeError:
+                print(raw)
         return
 
-    # TODO: use in an example
     if args.command == "schedule":
         settings.ensure_directories()
         memory = MemoryStore(settings.db_path)
@@ -72,15 +76,6 @@ def main() -> None:
 
     if args.command == "inspect-tools":
         runtime = build_runtime()
-
-        def to_jsonable(x):
-            if is_dataclass(x):
-                return asdict(x)
-            # fallback for non-dataclass objects
-            return {k: getattr(x, k) for k in dir(x)
-                    if not k.startswith("_") and isinstance(getattr(x, k),
-                                                            (str, int, float, bool, list, dict, type(None)))}
-
         print(json.dumps([to_jsonable(tool) for tool in runtime.tools.specs()], indent=2))
         return
 
