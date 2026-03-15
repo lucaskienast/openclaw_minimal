@@ -1,0 +1,317 @@
+Metadata-Version: 2.4
+Name: openclaw-lite
+Version: 0.1.0
+Summary: A lightweight educational Python alternative inspired by OpenClaw
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn>=0.30.0
+Requires-Dist: python-dotenv>=1.2.2
+
+# OpenClaw Lite
+
+OpenClaw Lite is a **lightweight, educational Python alternative inspired by OpenClaw**.
+It is deliberately much smaller, but it preserves the most important architectural ideas:
+
+- a **gateway** that receives messages
+- an **agent runtime** that owns the loop
+- **persistent session memory** in SQLite
+- **tools** behind a registry
+- **plugin loading** for extensions
+- an optional **scheduler** for proactive behavior
+- a **provider abstraction** so the runtime is not hard-coupled to one model vendor
+
+This is designed for learning, not for production hardening.
+
+---
+
+## What this project teaches
+
+If you want to understand how systems like OpenClaw are built, the most important lesson is this:
+
+> The model is only one part of the system. The real product is the runtime around it.
+
+That runtime is what handles:
+
+1. **message routing**
+2. **session state**
+3. **memory lookup**
+4. **tool execution**
+5. **policy boundaries**
+6. **background scheduling**
+7. **extensibility**
+
+---
+
+## Architecture
+
+```text
+Client / CLI / HTTP
+        |
+        v
+   FastAPI Gateway
+        |
+        v
+    Agent Runtime
+   /      |      \
+  v       v       v
+Memory   Tools   Provider
+SQLite  Registry   Demo or OpenAI-compatible
+        |
+        v
+      Plugins
+```
+
+### 1. Gateway
+
+`src/openclaw_lite/gateway.py`
+
+The gateway is the thin entry point. It accepts requests and forwards them into the runtime.
+
+### 2. Runtime
+
+`src/openclaw_lite/runtime.py`
+
+This is the heart of the system.
+For each user message it:
+
+1. stores the message in memory
+2. loads recent session history
+3. searches relevant past memory
+4. asks the provider what to do next
+5. either returns a response or executes a tool
+6. loops until done or `max_steps` is reached
+
+That loop is the most important pattern in agentic systems.
+
+### 3. Memory
+
+`src/openclaw_lite/memory.py`
+
+This project uses SQLite for messages and recurring tasks and provides a simple text search for matching prior content.
+
+### 4. Tools
+
+`src/openclaw_lite/tools/`
+
+Built-in tools:
+
+- `read_file`
+- `write_file`
+- `list_files`
+- `time_now`
+- `system_info`
+
+### 5. Plugins
+
+`plugins/echo_plugin.py`
+
+A tiny Python plugin loader lets you add tools without editing the core runtime.
+
+### 6. Scheduler
+
+`src/openclaw_lite/scheduler.py`
+
+This project uses recurring SQLite-backed tasks so the agent can wake up periodically and act.
+
+### 7. Provider abstraction
+
+`src/openclaw_lite/providers/`
+
+Two providers are included:
+
+- `demo`: deterministic, no API key needed
+- `openai_compatible`: works with any OpenAI-style chat completions API
+
+The point is architectural decoupling: the runtime owns the loop, and the model backend is swappable.
+
+---
+
+## Why this is a good OpenClaw learning clone
+
+This project intentionally recreates the **shape** of the architecture rather than the full surface area.
+
+### What it includes
+
+- persistent gateway + runtime split
+- stateful sessions
+- memory store
+- tool registry
+- plugin system
+- recurring task scheduler
+- optional real model provider
+
+### What it intentionally leaves out
+
+- multi-channel adapters like WhatsApp / Slack / iMessage
+- Docker sandboxing
+- vector embeddings
+- browser automation
+- voice / wake word
+- Canvas / A2UI
+- advanced auth and pairing
+- production security hardening
+
+---
+
+## Install
+
+### 1. Create a virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+### 3. Optional environment file
+
+Copy `.env.example` values into your shell or export them manually.
+
+Example:
+
+```bash
+export OPENCLAW_LITE_PROVIDER=demo
+export OPENCLAW_LITE_DB_PATH=./data/agent.db
+export OPENCLAW_LITE_WORKSPACE=./data/workspace
+export OPENCLAW_LITE_HOST=127.0.0.1
+export OPENCLAW_LITE_PORT=8765
+```
+
+---
+
+## Run the project
+
+### Start the gateway
+
+```bash
+openclaw-lite serve
+```
+
+Server:
+
+- health check: `GET /health`
+- agent endpoint: `POST /message`
+
+### Send a message through the CLI
+
+In another terminal:
+
+```bash
+openclaw-lite chat "hello"
+openclaw-lite chat "list files"
+openclaw-lite chat "write file notes.txt: hello from agent"
+openclaw-lite chat "read file notes.txt"
+```
+
+### Call the HTTP API directly
+
+```bash
+curl -X POST http://127.0.0.1:8765/message \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"main","message":"write file notes.txt: hello"}'
+```
+
+---
+
+## Run the scheduler
+
+Create a recurring task:
+
+```bash
+openclaw-lite schedule daily_check "list files and summarize the workspace" 30
+```
+
+Then run the scheduler loop in another terminal:
+
+```bash
+openclaw-lite run-scheduler
+```
+
+This demonstrates the proactive agent pattern.
+
+---
+
+## Switch to a real model
+
+Set:
+
+```bash
+export OPENCLAW_LITE_PROVIDER=openai_compatible
+export OPENCLAW_LITE_API_KEY=your_key
+export OPENCLAW_LITE_MODEL=gpt-4o-mini
+export OPENCLAW_LITE_BASE_URL=https://api.openai.com/v1
+```
+
+Then restart the gateway.
+
+The `openai_compatible` provider asks the model to return strict JSON so the runtime can decide whether to:
+
+- answer directly
+- call a tool with structured arguments
+
+---
+
+## Add your own plugin tool
+
+Create a new Python file under `plugins/`:
+
+```python
+from openclaw_lite.tools.base import Tool, ToolContext, ToolRegistry
+
+class UpperTool(Tool):
+    name = "upper"
+    description = "Convert text to uppercase"
+    input_schema = {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    }
+
+    def run(self, tool_input: dict, context: ToolContext) -> str:
+        return tool_input["text"].upper()
+
+
+def register(registry: ToolRegistry) -> None:
+    registry.register(UpperTool())
+```
+
+Restart the server, and the plugin loader will register it.
+
+---
+
+## Test
+
+```bash
+pip install pytest
+pytest -q
+```
+
+---
+
+## Suggested learning order
+
+If you want to really understand the architecture, read the project in this order:
+
+1. `gateway.py`
+2. `runtime.py`
+3. `memory.py`
+4. `tools/base.py`
+5. `providers/demo.py`
+6. `plugin_loader.py`
+7. `scheduler.py`
+
+That path shows the system in the same order that a message flows through it.
+
+---
+
+## Important safety note
+
+This project is intentionally small and educational.
+It is **not** hardened for hostile multi-user environments.

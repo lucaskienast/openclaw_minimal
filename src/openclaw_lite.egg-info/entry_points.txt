@@ -1,0 +1,2 @@
+[console_scripts]
+openclaw-lite = openclaw_lite.main:main
