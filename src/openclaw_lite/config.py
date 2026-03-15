@@ -20,6 +20,7 @@ class Settings:
     api_key: str | None = os.getenv("OPENCLAW_LITE_API_KEY")
     model: str = os.getenv("OPENCLAW_LITE_MODEL", "gpt-4o-mini")
     base_url: str = os.getenv("OPENCLAW_LITE_BASE_URL", "https://api.openai.com/v1")
+    plugins_dir: Path | None = (Path(v) if (v := os.getenv("OPENCLAW_LITE_PLUGINS_DIR")) else None)
 
     def ensure_directories(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

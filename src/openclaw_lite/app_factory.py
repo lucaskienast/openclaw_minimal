@@ -22,7 +22,8 @@ def build_runtime() -> AgentRuntime:
     registry.register(ListFilesTool())
     registry.register(TimeTool())
     registry.register(SystemInfoTool())
-    load_plugins(Path(__file__).resolve().parents[2] / "plugins", registry)
+    default_plugins = Path(__file__).resolve().parents[2] / "plugins"
+    load_plugins(settings.plugins_dir if settings.plugins_dir is not None else default_plugins, registry)
 
     print(f"Provider: {settings.provider}")
 

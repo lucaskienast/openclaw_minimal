@@ -54,6 +54,34 @@ class DemoProvider(Provider):
                                  tool_input={},
                                  reasoning="User asked for system info.")
 
+        echo_match = re.search(r"echo\s+(.+)", user_message, flags=re.IGNORECASE)
+        if echo_match:
+            return AgentDecision(type="tool",
+                                 tool_name="echo",
+                                 tool_input={"text": echo_match.group(1).strip()},
+                                 reasoning="User asked to echo text.")
+
+        fetch_match = re.search(r"fetch\s+(https?://\S+)", user_message, flags=re.IGNORECASE)
+        if fetch_match:
+            return AgentDecision(type="tool",
+                                 tool_name="web_fetch",
+                                 tool_input={"url": fetch_match.group(1).strip()},
+                                 reasoning="User asked to fetch a URL.")
+
+        calc_match = re.search(r"calculate\s+(.+)", user_message, flags=re.IGNORECASE)
+        if calc_match:
+            return AgentDecision(type="tool",
+                                 tool_name="calculator",
+                                 tool_input={"expression": calc_match.group(1).strip()},
+                                 reasoning="User asked to calculate an expression.")
+
+        shell_match = re.search(r"shell\s+(.+)", user_message, flags=re.IGNORECASE)
+        if shell_match:
+            return AgentDecision(type="tool",
+                                 tool_name="shell",
+                                 tool_input={"command": shell_match.group(1).strip()},
+                                 reasoning="User asked to run a shell command.")
+
         content = (
             "Demo Agent response.\n\n"
             f"Session context: {len(history)} message(s) in history, {len(memories)} relevant memory hit(s).\n\n."
