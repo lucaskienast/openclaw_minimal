@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 
 from ..config import Settings
-from ..schemas import AgentDecision, ChatMessage, ToolSpec
+from ..schemas import AgentDecision, ChatMessage, MemoryContext, ToolSpec
 from .base import Provider
 from ..utils import to_jsonable
 
@@ -17,7 +17,7 @@ class OpenAICompatibleProvider(Provider):
     def decide(self,
                system_prompt: str,
                history: list[ChatMessage],
-               memories: list[ChatMessage],
+               memory_context: MemoryContext,
                tool_specs: list[ToolSpec],
                user_message: str,
                ) -> AgentDecision:
@@ -26,10 +26,18 @@ class OpenAICompatibleProvider(Provider):
 
         system_parts = [system_prompt]
 
-        if memories:
-            system_parts.append("Relevant memory:\n" + "\n".join(m.content for m in memories))
+        if memory_context.long_term:
+            lt_text = "\n".join(f"- {f}" for f in memory_context.long_term)
+            system_parts.append(f"Relevant long-term memories (includes recency and importance):\n{lt_text}")
 
+        if memory_context.knowledge:
+            k_text = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(memory_context.knowledge))
+            system_parts.append(f"Relevant knowledge from document store:\n{k_text}")
+
+        # TODO: use structured outputs schema
         system_parts.append(
+            "Note: knowledge retrieval is automatic. Only call search_knowledge if the above "
+            "context is insufficient or you need a more specific query.\n\n"
             "You must answer in strict JSON with one of these shapes:\n"
             '{"type":"respond","content":"..."}\n'
             '{"type":"tool","tool_name":"...","tool_input":{...},"reasoning":"..."}\n'

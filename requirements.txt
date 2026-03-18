@@ -2,3 +2,4 @@ fastapi>=0.115.0
 uvicorn>=0.30.0
 
 python-dotenv
+chromadb>=0.6.0,<1.0.0

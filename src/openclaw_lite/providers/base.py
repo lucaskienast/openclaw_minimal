@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..schemas import AgentDecision, ChatMessage, ToolSpec
+from ..schemas import AgentDecision, ChatMessage, MemoryContext, ToolSpec
 
 
 class Provider(ABC):
@@ -11,7 +11,7 @@ class Provider(ABC):
         self,
         system_prompt: str,
         history: list[ChatMessage],
-        memories: list[ChatMessage],
+        memory_context: MemoryContext,
         tool_specs: list[ToolSpec],
         user_message: str,
     ) -> AgentDecision:

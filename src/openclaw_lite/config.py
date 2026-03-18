@@ -21,10 +21,12 @@ class Settings:
     model: str = os.getenv("OPENCLAW_LITE_MODEL", "gpt-4o-mini")
     base_url: str = os.getenv("OPENCLAW_LITE_BASE_URL", "https://api.openai.com/v1")
     plugins_dir: Path | None = (Path(v) if (v := os.getenv("OPENCLAW_LITE_PLUGINS_DIR")) else None)
+    knowledge_dir: Path = Path(os.getenv("OPENCLAW_LITE_KNOWLEDGE_DIR", "./data/knowledge"))
 
     def ensure_directories(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.workspace.mkdir(parents=True, exist_ok=True)
+        self.knowledge_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

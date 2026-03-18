@@ -11,6 +11,8 @@ def test_write_and_read_cycle() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         settings.db_path = Path(tmp) / "agent.db"
         settings.workspace = Path(tmp) / "workspace"
+        settings.knowledge_dir = Path(tmp) / "knowledge"
+        settings.provider = "demo"
         runtime = build_runtime()
         out1 = runtime.handle_message("test", "write file notes.txt: hello world")
         assert "Wrote" in "\n".join(out1["scratchpad"])

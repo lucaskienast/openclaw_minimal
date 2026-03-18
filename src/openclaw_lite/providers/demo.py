@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from ..schemas import AgentDecision, ChatMessage, ToolSpec
+from ..schemas import AgentDecision, ChatMessage, MemoryContext, ToolSpec
 from .base import Provider
 
 
@@ -16,7 +16,7 @@ class DemoProvider(Provider):
     def decide(self,
                system_prompt: str,
                history: list[ChatMessage],
-               memories: list[ChatMessage],
+               memory_context: MemoryContext,
                tool_specs: list[ToolSpec],
                user_message: str,
                ) -> AgentDecision:
@@ -82,9 +82,35 @@ class DemoProvider(Provider):
                                  tool_input={"command": shell_match.group(1).strip()},
                                  reasoning="User asked to run a shell command.")
 
+        remember_match = re.search(r"remember\s+(.+)", user_message, flags=re.IGNORECASE)
+        if remember_match:
+            return AgentDecision(type="tool", tool_name="remember",
+                                 tool_input={"content": remember_match.group(1).strip()},
+                                 reasoning="User asked to store a memory.")
+
+        recall_match = re.search(r"recall\s+(.+)", user_message, flags=re.IGNORECASE)
+        if recall_match:
+            return AgentDecision(type="tool", tool_name="recall",
+                                 tool_input={"query": recall_match.group(1).strip()},
+                                 reasoning="User asked to recall a memory.")
+
+        ingest_match = re.search(r"ingest\s+(.+)", user_message, flags=re.IGNORECASE | re.DOTALL)
+        if ingest_match:
+            return AgentDecision(type="tool", tool_name="ingest_document",
+                                 tool_input={"text": ingest_match.group(1).strip()},
+                                 reasoning="User asked to ingest a document.")
+
+        sk_match = re.search(r"search knowledge\s+(.+)", user_message, flags=re.IGNORECASE)
+        if sk_match:
+            return AgentDecision(type="tool", tool_name="search_knowledge",
+                                 tool_input={"query": sk_match.group(1).strip()},
+                                 reasoning="User asked to search knowledge base.")
+
         content = (
             "Demo Agent response.\n\n"
-            f"Session context: {len(history)} message(s) in history, {len(memories)} relevant memory hit(s).\n\n."
+            f"Session context: {len(history)} message(s) in history, "
+            f"{len(memory_context.long_term)} long-term memory hit(s), "
+            f"{len(memory_context.knowledge)} knowledge hit(s).\n\n."
         )
         return AgentDecision(type="respond",
                              content=content,
