@@ -1,1 +1,0 @@
-1. get promoted,\n2. learn ai,\n3. make more money

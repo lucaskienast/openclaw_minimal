@@ -16,7 +16,7 @@ class Settings:
     workspace: Path = Path(os.getenv("OPENCLAW_LITE_WORKSPACE", "./data/workspace"))
     host: str = os.getenv("OPENCLAW_LITE_HOST", "127.0.0.1")
     port: int = int(os.getenv("OPENCLAW_LITE_PORT", "8765"))
-    max_steps: int = int(os.getenv("OPENCLAW_LITE_MAX_STEPS", "5"))
+    max_steps: int = int(os.getenv("OPENCLAW_LITE_MAX_STEPS", "20"))
     api_key: str | None = os.getenv("OPENCLAW_LITE_API_KEY")
     model: str = os.getenv("OPENCLAW_LITE_MODEL", "gpt-4o-mini")
     base_url: str = os.getenv("OPENCLAW_LITE_BASE_URL", "https://api.openai.com/v1")

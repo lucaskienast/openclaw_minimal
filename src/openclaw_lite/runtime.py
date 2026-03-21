@@ -11,9 +11,13 @@ from .tools.base import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are OpenClaw Lite, a tiny educational agent runtime.
-Your job is to demonstrate a production-style agent loop in a safe and understandable way.
-When helpful, use tools. Keep answers clear and grounded in the available context.
+SYSTEM_PROMPT = """You are OpenClaw Lite, a capable agent that executes tasks using tools.
+
+Rules you must always follow:
+1. When given a task, IMMEDIATELY start executing it using tools. Do NOT describe what you plan to do — just do it.
+2. For multi-step tasks, continue calling tools until EVERY step is complete. Only emit a 'respond' decision once ALL requested steps are finished.
+3. Keep track of what has been done and what remains. Do not stop partway through.
+4. Keep final responses clear and grounded in what was actually done.
 """
 
 
@@ -36,6 +40,7 @@ class AgentRuntime:
 
     def handle_message(self, session_id: str, user_message: str) -> dict:
         self.memory.add_message(session_id, ChatMessage(role="user", content=user_message))
+        original_message = user_message
 
         def _get_history() -> list[ChatMessage]:
             msgs = self.memory.get_history(session_id, limit=25)
@@ -54,7 +59,7 @@ class AgentRuntime:
         tool_context = ToolContext(session_id=session_id, workspace=str(self.settings.workspace))
 
         for step in range(1, self.settings.max_steps + 1):
-            memory_context = _build_context(user_message)
+            memory_context = _build_context(original_message)
             decision = self.provider.decide(
                 system_prompt=SYSTEM_PROMPT,
                 history=memory_context.short_term,
@@ -79,7 +84,11 @@ class AgentRuntime:
                 observation = f"tool={tool.name} input={decision.tool_input} output={result}"
                 scratchpad.append(observation)
                 self.memory.add_message(session_id, ChatMessage(role="tool", content=observation))
-                user_message = f"The tool result was: {result}. Now continue helping the user."
+                user_message = (
+                    f"Tool result: {result}\n\n"
+                    f"Original task (complete ALL steps before responding): {original_message}\n\n"
+                    "Continue with the next step. Use more tools as needed."
+                )
                 continue
 
             raise RuntimeError(f"Unsupported decision type: {decision.type}")

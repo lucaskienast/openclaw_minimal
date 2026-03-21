@@ -25,6 +25,8 @@ def main() -> None:
     chat_parser = sub.add_parser("chat", help="Send one message to the local gateway")
     chat_parser.add_argument("message")
     chat_parser.add_argument("--session", default="main")
+    chat_parser.add_argument("--timeout", type=int, default=300,
+                             help="HTTP timeout in seconds (default: 300)")
 
     sched_parser = sub.add_parser("schedule", help="Create a recurring scheduled prompt")
     sched_parser.add_argument("name")
@@ -48,7 +50,7 @@ def main() -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
             raw = resp.read().decode("utf-8")
             try:
                 data = json.loads(raw)
