@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import settings
+from .extraction import MemoryExtractionAgent
 from .knowledge_store import KnowledgeStore
 from .memory import LongTermMemory, MemoryStore
 from .plugin_loader import load_plugins
@@ -47,6 +48,12 @@ def build_runtime() -> AgentRuntime:
     else:
         raise ValueError(f"Unsupported provider: {settings.provider}")
 
+    # Eagerly initialize ChromaDB to avoid background-thread race condition
+    # TODO: fix: Access to a protected member _ensure_initialized of a class
+    long_term_memory._ensure_initialized()
+
+    extraction_agent = MemoryExtractionAgent(settings, memory, long_term_memory)
+
     return AgentRuntime(
         settings=settings,
         memory=memory,
@@ -54,4 +61,5 @@ def build_runtime() -> AgentRuntime:
         knowledge_store=knowledge_store,
         provider=provider,
         tools=registry,
+        extraction_agent=extraction_agent,
     )

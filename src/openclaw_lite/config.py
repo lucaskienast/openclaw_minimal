@@ -22,6 +22,8 @@ class Settings:
     base_url: str = os.getenv("OPENCLAW_LITE_BASE_URL", "https://api.openai.com/v1")
     plugins_dir: Path | None = (Path(v) if (v := os.getenv("OPENCLAW_LITE_PLUGINS_DIR")) else None)
     knowledge_dir: Path = Path(os.getenv("OPENCLAW_LITE_KNOWLEDGE_DIR", "./data/knowledge"))
+    memory_extraction: bool = os.getenv("OPENCLAW_LITE_MEMORY_EXTRACTION", "true").lower() == "true"
+    extraction_model: str | None = os.getenv("OPENCLAW_LITE_EXTRACTION_MODEL")
 
     def ensure_directories(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -24,8 +24,9 @@ DECISION_SCHEMA = {
                 "tool_name":  {"anyOf": [{"type": "string"}, {"type": "null"}]},
                 "tool_input": {"type": "object"},
                 "reasoning":  {"type": "string"},
+                "tasks":      {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["type", "content", "tool_name", "tool_input", "reasoning"],
+            "required": ["type", "content", "tool_name", "tool_input", "reasoning", "tasks"],
             "additionalProperties": False,
         },
     },
@@ -48,6 +49,11 @@ class OpenAICompatibleProvider(Provider):
 
         system_parts = [system_prompt]
 
+        if memory_context.session_summary:
+            system_parts.append(
+                f"Session summary (high priority — what has been discussed so far):\n{memory_context.session_summary}"
+            )
+
         if memory_context.long_term:
             lt_text = "\n".join(f"- {f}" for f in memory_context.long_term)
             system_parts.append(f"Relevant long-term memories (includes recency and importance):\n{lt_text}")
@@ -59,11 +65,14 @@ class OpenAICompatibleProvider(Provider):
         system_parts.append(
             "Note: knowledge retrieval is automatic. Only call search_knowledge if the above "
             "context is insufficient or you need a more specific query.\n\n"
-            "Respond with a single JSON object. It must match exactly one of these shapes:\n\n"
-            '  Respond:   {"type":"respond","content":"..."}\n'
-            '  Use tool:  {"type":"tool","tool_name":"<name>","tool_input":{...},"reasoning":"..."}\n\n'
-            'IMPORTANT: "type" must be the literal string "respond" or "tool". '
-            'Never put a tool name in the "type" field.\n\n'
+            "Respond with a single JSON object. ALWAYS include the `tasks` field.\n\n"
+            '  Intermediate: {"type":"respond","content":"...","tasks":["remaining task 1","remaining task 2"]}\n'
+            '  Use tool:     {"type":"tool","tool_name":"<name>","tool_input":{...},"reasoning":"...","tasks":["remaining"]}\n'
+            '  Final:        {"type":"respond","content":"...","tasks":[]}\n\n'
+            'IMPORTANT:\n'
+            '- "type" must be "respond" or "tool". Never put a tool name in "type".\n'
+            '- "tasks" is REQUIRED in every response. On your first decision, list ALL work items.\n'
+            '  Remove items as you complete them. Only set tasks=[] when ALL work is done.\n\n'
             f"Available tools: {json.dumps([to_jsonable(tool) for tool in tool_specs])}"
         )
 
@@ -110,9 +119,13 @@ class OpenAICompatibleProvider(Provider):
         data = json.loads(raw)
 
         # Fallback: model used tool name as "type" (e.g. {"type":"write_file",...})
-        if data.get("type") not in ("respond", "tool"):
-            data["tool_name"] = data.get("tool_name") or data["type"]
-            data["type"] = "tool"
+        decision_type = data.get("type")
+        if decision_type not in ("respond", "tool"):
+            if decision_type:  # model put a tool name in the "type" field
+                data["tool_name"] = data.get("tool_name") or decision_type
+                data["type"] = "tool"
+            else:              # "type" key is missing entirely — safe default
+                data["type"] = "respond"
 
         return AgentDecision(
             type=data["type"],
@@ -120,4 +133,5 @@ class OpenAICompatibleProvider(Provider):
             tool_name=data.get("tool_name"),
             tool_input=data.get("tool_input", {}),
             reasoning=data.get("reasoning", ""),
+            tasks=data.get("tasks"),
         )

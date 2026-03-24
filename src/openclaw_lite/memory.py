@@ -65,6 +65,13 @@ class MemoryStore:
                     INSERT INTO long_term_memories_fts(long_term_memories_fts, rowid, content)
                         VALUES ('delete', old.id, old.content);
                 END;
+
+                CREATE TABLE IF NOT EXISTS session_summaries (
+                    session_id TEXT PRIMARY KEY,
+                    summary    TEXT NOT NULL DEFAULT '',
+                    turn_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
 
@@ -127,6 +134,28 @@ class MemoryStore:
             conn.execute(
                 "UPDATE tasks SET next_run_epoch = ? WHERE id = ?",
                 (next_run_epoch, task_id),
+            )
+
+    def get_session_summary(self, session_id: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT summary FROM session_summaries WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return row["summary"] if row else ""
+
+    def upsert_session_summary(self, session_id: str, summary: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_summaries(session_id, summary, turn_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    summary = excluded.summary,
+                    turn_count = turn_count + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (session_id, summary),
             )
 
 
