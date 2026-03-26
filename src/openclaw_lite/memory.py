@@ -160,7 +160,6 @@ class MemoryStore:
 
 
 class LongTermMemory:
-    # TODO: auto compaction of short term memory into summarised long term memory of conversation main points and events
     SIMILARITY_DEDUP_THRESHOLD = 0.08  # cosine distance; lower = more similar
 
     def __init__(self, db_path: Path, knowledge_dir: Path) -> None:
@@ -261,12 +260,10 @@ class LongTermMemory:
             if row:
                 date = str(row["created_at"])[:10]
                 imp = f"{row['importance']:.1f}"
-                # TODO could we just store embedding representation in chroma and fetch content from sql db?
                 text = doc[:max_chars_per_item]
                 formatted.append(f"[{date}, importance={imp}] {text}")
         return formatted
 
-    # TODO: not use anywhere so far? where would it?
     def list_all(self, limit: int = 50) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(

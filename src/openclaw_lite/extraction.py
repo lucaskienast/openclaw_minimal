@@ -100,8 +100,6 @@ Current summary: {current_summary}"""
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    # TODO: only extract important preferences and details about the user for cross chat info (name, job, location, etc - but not every request made or other conversational things)
-    # TODO: still keep summary of current chat for individual chats (here keep conversational summary)
     def extract(self, user_msg: str, assistant_msg: str, current_summary: str) -> ExtractionResult:
         model = self.settings.extraction_model or self.settings.model
         prompt = self._PROMPT_TEMPLATE.format(

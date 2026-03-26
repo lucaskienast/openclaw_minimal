@@ -49,7 +49,6 @@ def build_runtime() -> AgentRuntime:
         raise ValueError(f"Unsupported provider: {settings.provider}")
 
     # Eagerly initialize ChromaDB to avoid background-thread race condition
-    # TODO: fix: Access to a protected member _ensure_initialized of a class
     long_term_memory._ensure_initialized()
 
     extraction_agent = MemoryExtractionAgent(settings, memory, long_term_memory)
