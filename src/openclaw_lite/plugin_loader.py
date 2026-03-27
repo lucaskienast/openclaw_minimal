@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
-import logging
+import structlog
 from pathlib import Path
 
 from .tools.base import ToolRegistry
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def load_plugins(plugin_dir: Path, registry: ToolRegistry) -> None:

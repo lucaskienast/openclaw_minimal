@@ -1,117 +1,127 @@
+"""Deterministic demo provider — runs with zero API keys."""
 from __future__ import annotations
 
 import re
 
-from ..schemas import AgentDecision, ChatMessage, MemoryContext, ToolSpec
-from .base import Provider
+from openclaw_lite.schemas import (
+    AgentDecision,
+    ChatMessage,
+    DecisionType,
+    MemoryContext,
+    TaskItem,
+    TaskStatus,
+    ToolSpec,
+)
+from openclaw_lite.providers.base import Provider
 
 
 class DemoProvider(Provider):
-    """A deterministic provider so the project runs with zero API keys.
+    """Pattern-matching provider for testing without an LLM API.
 
-    This is intentionally simple: it spots a few command-like intents and otherwise
-    responds with an explanation based on the assembled context.
+    Returns valid AgentDecision objects matching the full Pydantic schema,
+    including delegation support.
     """
 
-    def decide(self,
-               system_prompt: str,
-               history: list[ChatMessage],
-               memory_context: MemoryContext,
-               tool_specs: list[ToolSpec],
-               user_message: str,
-               ) -> AgentDecision:
+    def decide(
+        self,
+        system_prompt: str,
+        history: list[ChatMessage],
+        memory_context: MemoryContext,
+        tool_specs: list[ToolSpec],
+        user_message: str,
+    ) -> AgentDecision:
         lower = user_message.lower().strip()
 
-        write_match = re.search(r"write file ([^:]+):\s*(.+)", user_message, flags=re.IGNORECASE | re.DOTALL)
+        # Tool patterns
+        write_match = re.search(
+            r"write file ([^:]+):\s*(.+)", user_message,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
         if write_match:
-            return AgentDecision(type="tool",
-                                 tool_name="write_file",
-                                 tool_input={"path": write_match.group(1).strip(), "content": write_match.group(2).strip()},
-                                 reasoning="User asked to write a file.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="write_file",
+                tool_input={
+                    "path": write_match.group(1).strip(),
+                    "content": write_match.group(2).strip(),
+                },
+                reasoning="User asked to write a file.",
+                tasks=[TaskItem(description="Write file", status=TaskStatus.IN_PROGRESS)],
+            )
 
         read_match = re.search(r"read file\s+(.+)", lower)
         if read_match:
-            return AgentDecision(type="tool",
-                                 tool_name="read_file",
-                                 tool_input={"path": read_match.group(1).strip()},
-                                 reasoning="User asked to read a file.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="read_file",
+                tool_input={"path": read_match.group(1).strip()},
+                reasoning="User asked to read a file.",
+                tasks=[TaskItem(description="Read file", status=TaskStatus.IN_PROGRESS)],
+            )
 
         if "list files" in lower:
-            return AgentDecision(type="tool",
-                                 tool_name="list_files",
-                                 tool_input={},
-                                 reasoning="User asked to inspect workspace files.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="list_files",
+                tool_input={},
+                reasoning="User asked to list files.",
+                tasks=[TaskItem(description="List files", status=TaskStatus.IN_PROGRESS)],
+            )
 
         if "time" in lower or "current utc" in lower:
-            return AgentDecision(type="tool",
-                                 tool_name="time_now",
-                                 tool_input={},
-                                 reasoning="User asked for the current time.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="time_now",
+                tool_input={},
+                reasoning="User asked for time.",
+            )
 
         if "system info" in lower:
-            return AgentDecision(type="tool",
-                                 tool_name="system_info",
-                                 tool_input={},
-                                 reasoning="User asked for system info.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="system_info",
+                tool_input={},
+                reasoning="User asked for system info.",
+            )
 
-        echo_match = re.search(r"echo\s+(.+)", user_message, flags=re.IGNORECASE)
-        if echo_match:
-            return AgentDecision(type="tool",
-                                 tool_name="echo",
-                                 tool_input={"text": echo_match.group(1).strip()},
-                                 reasoning="User asked to echo text.")
+        # Delegation pattern
+        delegate_match = re.search(
+            r"delegate (\w+):\s*(.+)", user_message, flags=re.IGNORECASE | re.DOTALL,
+        )
+        if delegate_match:
+            return AgentDecision(
+                type=DecisionType.DELEGATE,
+                delegation_target=delegate_match.group(1).strip(),
+                delegation_prompt=delegate_match.group(2).strip(),
+                reasoning="User explicitly delegated a task.",
+            )
 
         fetch_match = re.search(r"fetch\s+(https?://\S+)", user_message, flags=re.IGNORECASE)
         if fetch_match:
-            return AgentDecision(type="tool",
-                                 tool_name="web_fetch",
-                                 tool_input={"url": fetch_match.group(1).strip()},
-                                 reasoning="User asked to fetch a URL.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="web_fetch",
+                tool_input={"url": fetch_match.group(1).strip()},
+                reasoning="User asked to fetch a URL.",
+            )
 
         calc_match = re.search(r"calculate\s+(.+)", user_message, flags=re.IGNORECASE)
         if calc_match:
-            return AgentDecision(type="tool",
-                                 tool_name="calculator",
-                                 tool_input={"expression": calc_match.group(1).strip()},
-                                 reasoning="User asked to calculate an expression.")
+            return AgentDecision(
+                type=DecisionType.TOOL,
+                tool_name="calculator",
+                tool_input={"expression": calc_match.group(1).strip()},
+                reasoning="User asked to calculate.",
+            )
 
-        shell_match = re.search(r"shell\s+(.+)", user_message, flags=re.IGNORECASE)
-        if shell_match:
-            return AgentDecision(type="tool",
-                                 tool_name="shell",
-                                 tool_input={"command": shell_match.group(1).strip()},
-                                 reasoning="User asked to run a shell command.")
-
-        remember_match = re.search(r"remember\s+(.+)", user_message, flags=re.IGNORECASE)
-        if remember_match:
-            return AgentDecision(type="tool", tool_name="remember",
-                                 tool_input={"content": remember_match.group(1).strip()},
-                                 reasoning="User asked to store a memory.")
-
-        recall_match = re.search(r"recall\s+(.+)", user_message, flags=re.IGNORECASE)
-        if recall_match:
-            return AgentDecision(type="tool", tool_name="recall",
-                                 tool_input={"query": recall_match.group(1).strip()},
-                                 reasoning="User asked to recall a memory.")
-
-        ingest_match = re.search(r"ingest\s+(.+)", user_message, flags=re.IGNORECASE | re.DOTALL)
-        if ingest_match:
-            return AgentDecision(type="tool", tool_name="ingest_document",
-                                 tool_input={"text": ingest_match.group(1).strip()},
-                                 reasoning="User asked to ingest a document.")
-
-        sk_match = re.search(r"search knowledge\s+(.+)", user_message, flags=re.IGNORECASE)
-        if sk_match:
-            return AgentDecision(type="tool", tool_name="search_knowledge",
-                                 tool_input={"query": sk_match.group(1).strip()},
-                                 reasoning="User asked to search knowledge base.")
-
+        # Default: respond
         content = (
-            "Demo Agent response.\n\n"
-            f"Session context: {len(history)} message(s) in history, "
-            f"{len(memory_context.long_term)} long-term memory hit(s), "
-            f"{len(memory_context.knowledge)} knowledge hit(s).\n\n."
+            f"Demo agent response. "
+            f"{len(history)} message(s) in history, "
+            f"{len(memory_context.long_term)} long-term memory hit(s)."
         )
-        return AgentDecision(type="respond",
-                             content=content,
-                             reasoning="Fallback explanatory response.")
+        return AgentDecision(
+            type=DecisionType.RESPOND,
+            content=content,
+            reasoning="Fallback response.",
+        )

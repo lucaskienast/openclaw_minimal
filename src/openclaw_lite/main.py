@@ -1,22 +1,17 @@
+"""CLI entry point for openclaw-lite."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
-import time
 import urllib.request
 
 import uvicorn
 
-from openclaw_lite.utils import to_jsonable
-from .app_factory import build_runtime
-from .config import settings
-from .logging_utils import configure_logging
-from .memory import MemoryStore
-from .scheduler import run_scheduler
+from openclaw_lite.config import settings
 
 
 def main() -> None:
-    configure_logging()
     parser = argparse.ArgumentParser(description="OpenClaw Lite")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -24,62 +19,101 @@ def main() -> None:
 
     chat_parser = sub.add_parser("chat", help="Send one message to the local gateway")
     chat_parser.add_argument("message")
-    chat_parser.add_argument("--session", default="main")
-    chat_parser.add_argument("--timeout", type=int, default=300,
-                             help="HTTP timeout in seconds (default: 300)")
+    chat_parser.add_argument("--user-id", default="cli-user")
+    chat_parser.add_argument("--session-id", default=None)
+    chat_parser.add_argument("--timeout", type=int, default=300)
 
-    sched_parser = sub.add_parser("schedule", help="Create a recurring scheduled prompt")
-    sched_parser.add_argument("name")
-    sched_parser.add_argument("prompt")
-    sched_parser.add_argument("interval_seconds", type=int)
-    sched_parser.add_argument("--session", default="main")
-
-    sub.add_parser("run-scheduler", help="Run the scheduler loop")
     sub.add_parser("inspect-tools", help="Print registered tools")
 
     args = parser.parse_args()
 
     if args.command == "serve":
-        uvicorn.run("openclaw_lite.gateway:app", host=settings.host, port=settings.port, reload=False)
+        uvicorn.run(
+            "openclaw_lite.main:_create_asgi_app",
+            factory=True,
+            host=settings.host,
+            port=settings.port,
+            reload=False,
+        )
         return
 
     if args.command == "chat":
-        req = urllib.request.Request(
-            f"http://{settings.host}:{settings.port}/message",
-            data=json.dumps({"session_id": args.session, "message": args.message}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-            raw = resp.read().decode("utf-8")
-            try:
-                data = json.loads(raw)
-                print(json.dumps(data, indent=2))
-            except json.JSONDecodeError:
-                print(raw)
-        return
-
-    if args.command == "schedule":
-        settings.ensure_directories()
-        memory = MemoryStore(settings.db_path)
-        task_id = memory.add_task(
-            session_id=args.session,
-            name=args.name,
-            prompt=args.prompt,
-            interval_seconds=args.interval_seconds,
-            next_run_epoch=int(time.time()) + args.interval_seconds,
-        )
-        print(f"Created task {task_id}")
-        return
-
-    if args.command == "run-scheduler":
-        run_scheduler()
+        _handle_chat(args)
         return
 
     if args.command == "inspect-tools":
-        runtime = build_runtime()
-        print(json.dumps([to_jsonable(tool) for tool in runtime.tools.specs()], indent=2))
+        _handle_inspect_tools()
         return
+
+
+def _create_asgi_app():
+    """Factory function for uvicorn to create the async app."""
+    from openclaw_lite.app_factory import build_app
+
+    app = asyncio.run(build_app())
+    return app
+
+
+def _handle_chat(args) -> None:
+    """Send a message to the running gateway."""
+    base = f"http://{settings.host}:{settings.port}/api/v1"
+    user_id = args.user_id
+    session_id = args.session_id
+
+    # If no session_id, create one
+    if not session_id:
+        # Ensure user exists (ignore conflict)
+        req = urllib.request.Request(
+            f"{base}/users",
+            data=json.dumps({"user_id": user_id}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                pass
+        except urllib.error.HTTPError:
+            pass  # User may already exist
+
+        # Create session
+        req = urllib.request.Request(
+            f"{base}/users/{user_id}/sessions",
+            data=json.dumps({"title": "CLI Session"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-User-Id": user_id,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            session_data = json.loads(resp.read().decode())
+            session_id = session_data["session_id"]
+
+    # Send message
+    req = urllib.request.Request(
+        f"{base}/users/{user_id}/sessions/{session_id}/messages",
+        data=json.dumps({"content": args.message}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-User-Id": user_id,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+        data = json.loads(resp.read().decode())
+        print(json.dumps(data, indent=2))
+
+
+def _handle_inspect_tools() -> None:
+    """Print registered tool specs."""
+    from openclaw_lite.app_factory import _build_tool_registry
+
+    registry = _build_tool_registry()
+    specs = [
+        {"name": s.name, "description": s.description}
+        for s in registry.specs()
+    ]
+    print(json.dumps(specs, indent=2))
 
 
 if __name__ == "__main__":

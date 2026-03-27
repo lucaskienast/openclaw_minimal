@@ -1,5 +1,9 @@
 fastapi>=0.115.0
 uvicorn>=0.30.0
-
-python-dotenv
-chromadb>=0.6.0,<1.0.0
+python-dotenv>=1.2.2
+aiosqlite>=0.20.0
+tiktoken>=0.7.0
+structlog>=24.0.0
+matplotlib>=3.9.0
+pydantic>=2.7.0
+mcp>=1.0.0

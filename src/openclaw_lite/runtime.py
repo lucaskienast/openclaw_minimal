@@ -1,17 +1,15 @@
+"""Core agent runtime — async ReAct loop with multi-tenant support."""
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Any
 
-from .config import Settings
-from .knowledge_store import KnowledgeStore
-from .memory import LongTermMemory, MemoryStore
-from .providers.base import Provider
-from .schemas import ChatMessage, MemoryContext
-from .tools.base import ToolContext, ToolRegistry
-
-if TYPE_CHECKING:
-    from .extraction import MemoryExtractionAgent
+from openclaw_lite.config import Settings
+from openclaw_lite.memory.store import MemoryStore
+from openclaw_lite.providers.base import Provider
+from openclaw_lite.schemas import ChatMessage, MemoryContext
+from openclaw_lite.tools.base import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -29,110 +27,145 @@ Rules you must always follow:
 
 
 class AgentRuntime:
+    """Async agent runtime with multi-tenant session support."""
+
     def __init__(
         self,
         settings: Settings,
-        memory: MemoryStore,
-        long_term_memory: LongTermMemory,
-        knowledge_store: KnowledgeStore,
+        store: MemoryStore,
         provider: Provider,
         tools: ToolRegistry,
-        extraction_agent: MemoryExtractionAgent | None = None,
     ) -> None:
-        self.settings = settings
-        self.memory = memory
-        self.long_term_memory = long_term_memory
-        self.knowledge_store = knowledge_store
-        self.provider = provider
-        self.tools = tools
-        self.extraction_agent = extraction_agent
+        self._settings = settings
+        self._store = store
+        self._provider = provider
+        self._tools = tools
 
-    def handle_message(self, session_id: str, user_message: str) -> dict:
-        self.memory.add_message(session_id, ChatMessage(role="user", content=user_message))
+    async def handle_message(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        user_message: str,
+    ) -> dict[str, Any]:
+        """Process a user message through the agent loop.
+
+        Returns a dict with response, session_id, steps, and metadata.
+        """
+        return await asyncio.wait_for(
+            self._run_loop(user_id, session_id, user_message),
+            timeout=self._settings.response_timeout,
+        )
+
+    async def _run_loop(
+        self,
+        user_id: str,
+        session_id: str,
+        user_message: str,
+    ) -> dict[str, Any]:
         original_message = user_message
 
-        def _get_history() -> list[ChatMessage]:
-            msgs = self.memory.get_history(session_id, limit=25)
+        async def _get_history() -> list[ChatMessage]:
+            rows = await self._store.get_messages(session_id, user_id, limit=25)
+            msgs = [
+                ChatMessage(role=r["role"], content=r["content"]) for r in rows
+            ]
             if len(msgs) > 20:
                 msgs = msgs[:5] + msgs[-15:]
             return msgs
 
-        def _build_context(query: str) -> MemoryContext:
-            return MemoryContext(
-                short_term=_get_history(),
-                long_term=self.long_term_memory.search(query, limit=5),
-                knowledge=self.knowledge_store.search(query, n_results=3),
-                session_summary=self.memory.get_session_summary(session_id),
-            )
-
         scratchpad: list[str] = []
         completed_responses: list[str] = []
         pending_tasks: list[str] = []
-        tool_context = ToolContext(session_id=session_id, workspace=str(self.settings.workspace))
+        tools_used: list[str] = []
+        tool_context = ToolContext(
+            session_id=session_id,
+            workspace=str(self._settings.workspace / user_id),
+        )
 
-        for step in range(1, self.settings.max_steps + 1):
-            memory_context = _build_context(original_message)
-            decision = self.provider.decide(
+        for step in range(1, self._settings.max_steps + 1):
+            history = await _get_history()
+            memory_context = MemoryContext(short_term=history)
+
+            decision = self._provider.decide(
                 system_prompt=SYSTEM_PROMPT,
                 history=memory_context.short_term,
                 memory_context=memory_context,
-                tool_specs=self.tools.specs(),
+                tool_specs=self._tools.specs(),
                 user_message=user_message,
             )
-            logger.info("step=%s; decision=%s; reasoning=%s; remaining_tasks=%s", step, decision.type, decision.reasoning, decision.tasks)
+            logger.info(
+                "step=%s decision=%s reasoning=%s",
+                step,
+                decision.type,
+                decision.reasoning,
+            )
 
-            # Update pending tasks: model's list takes precedence when explicitly provided
-            # None = model didn't include tasks (safety net preserves last known)
-            # []   = model explicitly said "I'm done" (clears pending)
             if decision.tasks is not None:
-                pending_tasks = list(decision.tasks)
+                pending_tasks = [
+                    t.description if hasattr(t, "description") else str(t)
+                    for t in decision.tasks
+                ]
 
             if decision.type == "respond":
-                self.memory.add_message(session_id, ChatMessage(role="assistant", content=decision.content))
+                await self._store.add_message(
+                    session_id, user_id, "assistant", decision.content
+                )
                 if pending_tasks:
-                    # Tasks remain — continue loop
                     remaining = "\n".join(f"- {t}" for t in pending_tasks)
                     scratchpad.append(f"intermediate_response={decision.content!r}")
                     if decision.content:
                         completed_responses.append(decision.content)
                     user_message = (
                         f"Your explanation: {decision.content}\n\n"
-                        f"Remaining tasks (you MUST complete all of these):\n{remaining}\n\n"
+                        f"Remaining tasks:\n{remaining}\n\n"
                         f"Original request: {original_message}\n\n"
-                        "Continue with the next task. Return JSON with type, content, and tasks fields."
+                        "Continue with the next task."
                     )
                     continue
-                # No pending tasks — final response
+
                 if decision.content:
                     completed_responses.append(decision.content)
                 full_response = "\n\n".join(completed_responses)
-                if self.extraction_agent is not None:
-                    self.extraction_agent.run_async(session_id, original_message, full_response)
                 return {
-                    "session_id": session_id,
                     "response": full_response,
-                    "scratchpad": scratchpad,
+                    "session_id": session_id,
                     "steps": step,
+                    "tasks_completed": [],
+                    "tools_used": tools_used,
                 }
 
             if decision.type == "tool":
-                tool = self.tools.get(decision.tool_name or "")
+                tool = self._tools.get(decision.tool_name or "")
                 result = tool.run(decision.tool_input, tool_context)
-                observation = f"tool={tool.name} input={decision.tool_input} output={result}"
+                observation = f"tool={tool.name} output={result}"
                 scratchpad.append(observation)
                 completed_responses.append(f"[{tool.name}] {result}")
-                self.memory.add_message(session_id, ChatMessage(role="tool", content=observation))
-                remaining = "\n".join(f"- {t}" for t in pending_tasks) if pending_tasks else "(none specified)"
+                tools_used.append(tool.name)
+                await self._store.add_message(
+                    session_id, user_id, "tool", observation
+                )
+                remaining = (
+                    "\n".join(f"- {t}" for t in pending_tasks)
+                    if pending_tasks
+                    else "(none)"
+                )
                 user_message = (
                     f"Tool result: {result}\n\n"
                     f"Remaining tasks:\n{remaining}\n\n"
                     f"Original request: {original_message}\n\n"
-                    "Continue with the next task. Return JSON with type, content, and tasks fields."
+                    "Continue with the next task."
                 )
                 continue
 
             raise RuntimeError(f"Unsupported decision type: {decision.type}")
 
         fallback = "Stopped after max_steps to avoid an infinite loop."
-        self.memory.add_message(session_id, ChatMessage(role="assistant", content=fallback))
-        return {"session_id": session_id, "response": fallback, "scratchpad": scratchpad, "steps": self.settings.max_steps}
+        await self._store.add_message(session_id, user_id, "assistant", fallback)
+        return {
+            "response": fallback,
+            "session_id": session_id,
+            "steps": self._settings.max_steps,
+            "tasks_completed": [],
+            "tools_used": tools_used,
+        }

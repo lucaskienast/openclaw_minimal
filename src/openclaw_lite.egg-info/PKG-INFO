@@ -1,12 +1,22 @@
 Metadata-Version: 2.4
 Name: openclaw-lite
-Version: 0.1.0
+Version: 0.2.0
 Summary: A lightweight educational Python alternative inspired by OpenClaw
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.115.0
 Requires-Dist: uvicorn>=0.30.0
 Requires-Dist: python-dotenv>=1.2.2
+Requires-Dist: aiosqlite>=0.20.0
+Requires-Dist: tiktoken>=0.7.0
+Requires-Dist: structlog>=24.0.0
+Requires-Dist: matplotlib>=3.9.0
+Requires-Dist: pydantic>=2.7.0
+Requires-Dist: mcp>=1.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23.0; extra == "dev"
+Requires-Dist: httpx>=0.27.0; extra == "dev"
 
 # OpenClaw Lite
 

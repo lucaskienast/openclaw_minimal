@@ -1,15 +1,25 @@
+"""OpenAI-compatible provider with structured output enforcement."""
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
 
-from ..config import Settings
-from ..schemas import AgentDecision, ChatMessage, MemoryContext, ToolSpec
-from .base import Provider
-from ..utils import to_jsonable
+from openclaw_lite.config import Settings
+from openclaw_lite.providers.base import Provider
+from openclaw_lite.providers.output_parser import parse_decision
+from openclaw_lite.schemas import (
+    AgentDecision,
+    ChatMessage,
+    DecisionType,
+    MemoryContext,
+    TaskItem,
+    ToolSpec,
+)
 
+logger = logging.getLogger(__name__)
 
 DECISION_SCHEMA = {
     "type": "json_schema",
@@ -19,113 +29,186 @@ DECISION_SCHEMA = {
         "schema": {
             "type": "object",
             "properties": {
-                "type":       {"type": "string", "enum": ["respond", "tool"]},
-                "content":    {"type": "string"},
-                "tool_name":  {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "type": {"type": "string", "enum": ["respond", "tool", "delegate"]},
+                "content": {"type": "string"},
+                "reasoning": {"type": "string"},
+                "tool_name": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                 "tool_input": {"type": "object"},
-                "reasoning":  {"type": "string"},
-                "tasks":      {"type": "array", "items": {"type": "string"}},
+                "delegation_target": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "delegation_prompt": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed", "failed"],
+                            },
+                        },
+                        "required": ["description", "status"],
+                        "additionalProperties": False,
+                    },
+                },
             },
-            "required": ["type", "content", "tool_name", "tool_input", "reasoning", "tasks"],
+            "required": [
+                "type", "content", "reasoning", "tool_name",
+                "tool_input", "delegation_target", "delegation_prompt", "tasks",
+            ],
             "additionalProperties": False,
         },
     },
 }
 
+MAX_RETRIES = 2
+
 
 class OpenAICompatibleProvider(Provider):
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+        self._settings = settings
 
-    def decide(self,
-               system_prompt: str,
-               history: list[ChatMessage],
-               memory_context: MemoryContext,
-               tool_specs: list[ToolSpec],
-               user_message: str,
-               ) -> AgentDecision:
-        if not self.settings.api_key:
-            raise RuntimeError("OPENCLAW_LITE_API_KEY is required for openai_compatible provider")
+    def decide(
+        self,
+        system_prompt: str,
+        history: list[ChatMessage],
+        memory_context: MemoryContext,
+        tool_specs: list[ToolSpec],
+        user_message: str,
+    ) -> AgentDecision:
+        if not self._settings.api_key:
+            raise RuntimeError("OPENCLAW_LITE_API_KEY is required")
 
+        messages = self._build_messages(
+            system_prompt, history, memory_context, tool_specs, user_message
+        )
+
+        for attempt in range(1, MAX_RETRIES + 2):
+            raw = self._call_api(messages)
+
+            try:
+                data = json.loads(raw)
+                decision = self._parse_response(data)
+                return decision
+            except (json.JSONDecodeError, Exception) as exc:
+                logger.warning(
+                    "Parse attempt %d/%d failed: %s",
+                    attempt, MAX_RETRIES + 1, exc,
+                )
+                if attempt <= MAX_RETRIES:
+                    messages.append({
+                        "role": "assistant",
+                        "content": raw,
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was not valid JSON matching the "
+                            "required schema. Please respond with valid JSON."
+                        ),
+                    })
+                    continue
+
+                return parse_decision(raw)
+
+        return AgentDecision(
+            type=DecisionType.RESPOND,
+            reasoning="All parse retries exhausted",
+            content="I encountered an error processing my response.",
+        )
+
+    def _build_messages(
+        self,
+        system_prompt: str,
+        history: list[ChatMessage],
+        memory_context: MemoryContext,
+        tool_specs: list[ToolSpec],
+        user_message: str,
+    ) -> list[dict[str, str]]:
         system_parts = [system_prompt]
 
         if memory_context.session_summary:
             system_parts.append(
-                f"Session summary (high priority — what has been discussed so far):\n{memory_context.session_summary}"
+                f"Session summary:\n{memory_context.session_summary}"
             )
 
         if memory_context.long_term:
             lt_text = "\n".join(f"- {f}" for f in memory_context.long_term)
-            system_parts.append(f"Relevant long-term memories (includes recency and importance):\n{lt_text}")
+            system_parts.append(f"Long-term memories:\n{lt_text}")
 
-        if memory_context.knowledge:
-            k_text = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(memory_context.knowledge))
-            system_parts.append(f"Relevant knowledge from document store:\n{k_text}")
-
-        system_parts.append(
-            "Note: knowledge retrieval is automatic. Only call search_knowledge if the above "
-            "context is insufficient or you need a more specific query.\n\n"
-            "Respond with a single JSON object. ALWAYS include the `tasks` field.\n\n"
-            '  Intermediate: {"type":"respond","content":"...","tasks":["remaining task 1","remaining task 2"]}\n'
-            '  Use tool:     {"type":"tool","tool_name":"<name>","tool_input":{...},"reasoning":"...","tasks":["remaining"]}\n'
-            '  Final:        {"type":"respond","content":"...","tasks":[]}\n\n'
-            'IMPORTANT:\n'
-            '- "type" must be "respond" or "tool". Never put a tool name in "type".\n'
-            '- "tasks" is REQUIRED in every response. On your first decision, list ALL work items.\n'
-            '  Remove items as you complete them. Only set tasks=[] when ALL work is done.\n\n'
-            f"Available tools: {json.dumps([to_jsonable(tool) for tool in tool_specs])}"
+        tool_json = json.dumps(
+            [{"name": t.name, "description": t.description} for t in tool_specs]
         )
+        system_parts.append(f"Available tools: {tool_json}")
 
-        messages = [
+        messages: list[dict[str, str]] = [
             {"role": "system", "content": "\n\n".join(system_parts)},
         ]
-        ROLE_MAP = {"tool": "user", "assistant": "assistant", "user": "user"}
+        role_map = {"tool": "user", "assistant": "assistant", "user": "user"}
         messages.extend(
-            {"role": ROLE_MAP.get(m.role, "user"), "content": m.content}
+            {"role": role_map.get(m.role, "user"), "content": m.content}
             for m in history
         )
         messages.append({"role": "user", "content": user_message})
+        return messages
 
-        def _make_request(include_response_format: bool) -> dict:
-            request_body: dict[str, Any] = {"model": self.settings.model, "messages": messages, "temperature": 0}
-            if include_response_format:
-                request_body["response_format"] = DECISION_SCHEMA
-            encoded = json.dumps(request_body).encode("utf-8")
-            req = urllib.request.Request(
-                f"{self.settings.base_url.rstrip('/')}/chat/completions",
-                data=encoded,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.settings.api_key}",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-
+    def _call_api(self, messages: list[dict[str, str]]) -> str:
+        request_body: dict[str, Any] = {
+            "model": self._settings.model,
+            "messages": messages,
+            "temperature": 0,
+            "response_format": DECISION_SCHEMA,
+        }
+        encoded = json.dumps(request_body).encode()
+        req = urllib.request.Request(
+            f"{self._settings.base_url.rstrip('/')}/chat/completions",
+            data=encoded,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._settings.api_key}",
+            },
+            method="POST",
+        )
         try:
-            payload = _make_request(include_response_format=True)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                payload = json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="replace")
+            err_body = e.read().decode(errors="replace")
             if e.code == 400 and "response_format" in err_body:
-                try:
-                    payload = _make_request(include_response_format=False)
-                except urllib.error.HTTPError as e2:
-                    raise RuntimeError(f"API request failed {e2.code}: {e2.read().decode('utf-8', errors='replace')}") from e2
+                # Retry without response_format
+                del request_body["response_format"]
+                encoded = json.dumps(request_body).encode()
+                req = urllib.request.Request(
+                    f"{self._settings.base_url.rstrip('/')}/chat/completions",
+                    data=encoded,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self._settings.api_key}",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    payload = json.loads(resp.read().decode())
             else:
-                raise RuntimeError(f"API request failed {e.code}: {err_body}") from e
+                raise RuntimeError(f"API error {e.code}: {err_body}") from e
 
-        raw = payload["choices"][0]["message"]["content"]
-        data = json.loads(raw)
+        return payload["choices"][0]["message"]["content"]
 
-        # Fallback: model used tool name as "type" (e.g. {"type":"write_file",...})
-        decision_type = data.get("type")
-        if decision_type not in ("respond", "tool"):
-            if decision_type:  # model put a tool name in the "type" field
-                data["tool_name"] = data.get("tool_name") or decision_type
-                data["type"] = "tool"
-            else:              # "type" key is missing entirely — safe default
-                data["type"] = "respond"
+    def _parse_response(self, data: dict[str, Any]) -> AgentDecision:
+        # Handle model putting tool name in type field
+        decision_type = data.get("type", "respond")
+        if decision_type not in ("respond", "tool", "delegate"):
+            data["tool_name"] = data.get("tool_name") or decision_type
+            data["type"] = "tool"
+
+        # Convert legacy string tasks to TaskItem format
+        raw_tasks = data.get("tasks", [])
+        tasks = []
+        for t in raw_tasks:
+            if isinstance(t, str):
+                tasks.append(TaskItem(description=t))
+            elif isinstance(t, dict):
+                tasks.append(TaskItem(**t))
 
         return AgentDecision(
             type=data["type"],
@@ -133,5 +216,7 @@ class OpenAICompatibleProvider(Provider):
             tool_name=data.get("tool_name"),
             tool_input=data.get("tool_input", {}),
             reasoning=data.get("reasoning", ""),
-            tasks=data.get("tasks"),
+            delegation_target=data.get("delegation_target"),
+            delegation_prompt=data.get("delegation_prompt"),
+            tasks=tasks,
         )
